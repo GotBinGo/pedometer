@@ -1,0 +1,234 @@
+<html translate="no" >
+	<head>
+		<meta charset="UTF-8">
+	</head>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<select id="select">
+	<option>Tomi</option>
+	<option value="38139">A terminál</option>
+	<option value="38138">B terminál</option>
+	<option>38143</option>
+</select>
+<select id="time">
+	<option>60</option>
+	<option>30</option>
+	<option>15</option>
+	<option>5</option>
+</select>
+<input type="date" id="start" lang="hu-HU">
+<input type="date" id="end">
+
+<canvas style="max-width: 90vw; max-height: 90vh;" id="myChart" width="400" height="400"></canvas>
+<script>
+	Date.prototype.toDateInputValue = (function() {
+		var local = new Date(this);
+		local.setMinutes(this.getMinutes() - this.getTimezoneOffset());
+		return local.toJSON().slice(0,10);
+	});
+
+	function query(name){
+		if(name=(new RegExp('[?&]'+encodeURIComponent(name)+'=([^&]*)')).exec(location.search))
+		return decodeURIComponent(name[1]);
+	}
+
+	function updateUrl(key, value) {
+		var url = new URL(location.href);
+		url.searchParams.set(key, value);
+		history.pushState(null, '', url);
+	}
+
+	var myChart = null;
+	var ctx = document.getElementById('myChart').getContext('2d');
+
+
+	var user = query('user') || "Tomi";
+	var coeff = 1000 * 60 * (query('period') || 60);
+	time.value = (query('period') || 60)
+	var start = new Date();
+	start.setDate(start.getDate() - 3);
+	start = start.toDateInputValue();
+	start = query('start') || start;
+	var end = new Date().toDateInputValue();
+	end = query('end') || end;
+
+	document.getElementById('start').value = start;
+	document.getElementById('end').value = end;
+
+	select.onchange = (x) => {
+		user = select.value;
+		updateUrl('user', select.value);
+		update();
+	}
+
+	time.onchange = (x) => {
+		coeff = 1000 * 60 * Number(time.value);
+		updateUrl('period', time.value);
+
+		update();
+	}
+	document.getElementById('start').onchange = (x) => {
+		start = document.getElementById('start').value;
+		updateUrl('start', start);
+		update();
+	}
+	document.getElementById('end').onchange = (x) => {
+		end = document.getElementById('end').value
+		updateUrl('end', end);
+		update();
+	}
+
+
+
+	update();
+
+function update() {
+
+	if(myChart) {
+		myChart.destroy();
+	}
+
+fetch('https://a.ic.hu/list').then(x => x.text().then(x => {
+    x = x.toString();
+    
+	var dat = x.split('\n').filter(x => !!x).map(x => { 
+		return {
+			x : x.split('@')[1].split('=')[3] || x.split('@')[0], 
+			y: x.split('@')[1].split('=')[2].split('&')[0],
+			device: x.split('@')[1].split('=')[1].split('&')[0]
+		}
+	});
+    console.log(dat);
+	dat = dat.filter(x => x.device == user && start <= new Date(Number(x.x)).toDateInputValue() && new Date(Number(x.x)).toDateInputValue() <= end)
+
+    dd = [];
+
+
+    for(var i = 0; i < dat.length; i++) {
+        if(i == 0) {
+            dd[i] = {};
+            dd[i].x = dat[i].x.toString();
+            dd[i].y = (0).toString();
+        } else {
+            dd[i] = {}
+            var rounded = Math.round(dat[i].x / coeff) * coeff;
+            dd[i].x = rounded;
+            dd[i].x = dat[i].x;
+            // dd[i].x = dat[i].x;
+			var diff = (dat[i].y-dat[i-1].y);
+            dd[i].y = (diff < 0 ? 0 : diff).toString();
+        }
+    }
+
+    timeKeyed = [];
+	console.log(dd);
+	minTime = Math.round(Math.min(...dd.map(x => x.x)) / coeff) * coeff;
+	maxTime = Math.round(Math.max(...dd.map(x => x.x)) / coeff) * coeff;
+	//maxTime = +new Date()
+
+	times = {};
+	for(var t = minTime; t <= maxTime; t+= coeff) {
+		times[t] = 0;
+	}
+
+	console.log(times);
+
+	for(var i = 0; i < dd.length; i ++) {
+		times[Math.floor(dd[i].x / coeff) * coeff] += Number(dd[i].y);
+	}
+
+	for(var i = 0; i < dd.length; i++) {
+
+        timeKeyed[dd[i].x] = ((Number(timeKeyed[dd[i].x]) || 0) + Number(dd[i].y)) ;
+    }
+
+	timeKeyed[Math.max(...Object.keys(timeKeyed)) + 1000*60*10] = 0;
+
+    timeKeyed2 = [];
+
+    var missed = 1;
+    for(var t = Math.min(...Object.keys(timeKeyed)); t < Math.max(...Object.keys(timeKeyed)); t+=coeff) {
+		//console.log(timeKeyed2)    
+        var inGroup = Object.keys(timeKeyed).map(x => Number(x)).filter(x => x >= t && x < Number(t) + Number(coeff));
+        // console.log(inGroup)
+        if(inGroup.length) {
+            timeKeyed2[t] = inGroup.map(x => timeKeyed[x]).reduce((partial_sum, a) => (Number(partial_sum) + Number(a) || 0));
+        } else {
+            timeKeyed2[t] = null;
+        }
+        // console.log('t')
+    }
+
+    var skipped = 1;
+    for(var t = Math.min(...Object.keys(timeKeyed)); t < Math.max(...Object.keys(timeKeyed)); t+=coeff) {
+        if(t == Math.min(...Object.keys(timeKeyed))) {
+
+        } else {
+            
+            if(timeKeyed2[t] == null) {
+                skipped++;
+            } else {
+                for(var n = 0; n < skipped; n++) {
+                    timeKeyed2[t-((n+1)*coeff)] = timeKeyed2[t]/skipped
+                }
+                var skipped = 1;
+            }
+        }
+    }
+
+	//console.log(timeKeyed)
+//	onsole.log(timeKeyed2)    
+//	delete timeKeyed2[Math.max(...Object.keys(timeKeyed2))];
+
+    grouped = [];
+    for(var i of Object.keys(times)) { 
+        grouped.push({x: i, y: times[i]});
+    }
+
+    // console.log(dd);
+    const data = {
+  datasets: [{
+    label: 'Scatter Dataset',
+    data: grouped,
+    backgroundColor: 'rgb(255, 99, 132)'
+  }],
+};
+    const config = {
+  type: 'bar',
+  data: data,
+  options: {
+	plugins: {
+		tooltip: {
+			callbacks: {
+				label: function(context) {
+					return context.parsed.y;
+				},
+				title: function(value) {
+					return new Date(value[0].parsed.x).toLocaleString('hu').split(':').slice(0, 2).join(':');
+				}
+			}
+		}
+	},
+    scales: {
+      x: {
+        type: 'linear',
+        position: 'bottom',
+		grid: {
+			offset: false
+		},
+        ticks: {
+            stepSize: 1000*60*60,
+            callback: function(value, index, values) {
+                return new Date(value).toLocaleString('hu').split(':').slice(0, 2).join(':');
+            }
+        }
+      }
+    }
+  }
+};
+    myChart = new Chart(ctx, config);
+    myChart.canvas.parentNode.style.height = '1000px';
+}))
+
+}
+</script>
+</html>
